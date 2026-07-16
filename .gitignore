@@ -1,0 +1,4 @@
+config.env
+credentials.json
+go.mod
+go.sum
