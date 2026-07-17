@@ -9,7 +9,7 @@ import (
 	"net/http"
 )
 
-func main1() {
+func main() {
 	http.HandleFunc("/", handler.Handler)
 
 	if err := Attendance.Init("credentials.json"); err != nil {

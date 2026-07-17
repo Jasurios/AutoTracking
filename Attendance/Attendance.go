@@ -135,7 +135,7 @@ func Track(spreadsheetID string, studentID int, dateStr string, present bool) er
 										{
 											UserEnteredValue: &sheets.ExtendedValue{
 												NumberValue: func() *float64 {
-													v := float64(0)
+													v := float64(-1)
 													return &v
 												}(),
 											},
