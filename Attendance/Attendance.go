@@ -3,6 +3,7 @@ package Attendance
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"time"
 
@@ -11,14 +12,13 @@ import (
 	"google.golang.org/api/sheets/v4"
 )
 
-
 const sheetName = "Attendance"
 
+// bot — общий клиент Google Sheets на весь пакет, поднимается один раз в Init
 var bot *sheets.Service
 
-
-
-
+// Init поднимает клиент Google Sheets из сервис-аккаунта (credentials.json).
+// Дергать один раз при старте сервера, до всех Track().
 func Init(credentialsPath string) error {
 	raw, err := os.ReadFile(credentialsPath)
 	if err != nil {
@@ -44,10 +44,13 @@ func Init(credentialsPath string) error {
 	return nil
 }
 
-
-
+// Track отмечает посещаемость studentID на дату dateStr в таблице spreadsheetID.
+// present=true  -> ставит 1 в ячейку студента и красит её зелёным
+// present=false -> проставляет -1 всем пустым ячейкам колонки этой даты (розовым),
+//
+//	то есть массово помечает "отсутствовал" тех, кого не отметили
 func Track(spreadsheetID string, studentID int, dateStr string, present bool) error {
-	
+	// защита от вызова не в том порядке — Init должен отработать раньше
 	if bot == nil {
 		return fmt.Errorf("Attendance.Init не был вызван перед Track")
 	}
@@ -55,13 +58,13 @@ func Track(spreadsheetID string, studentID int, dateStr string, present bool) er
 		return fmt.Errorf("пустой spreadsheetID")
 	}
 
-	
+	// дата приходит строкой вида "02.01.2006" из handler'а
 	date, err := time.Parse("02.01.2006", dateStr)
 	if err != nil {
 		return fmt.Errorf("неверный формат даты %q, нужен день/месяц/год: %w", dateStr, err)
 	}
 
-	
+	// тащим весь лист разом — дешевле, чем дёргать Sheets API по частям
 	resp, err := bot.Spreadsheets.Values.Get(spreadsheetID, sheetName).
 		ValueRenderOption("UNFORMATTED_VALUE").
 		DateTimeRenderOption("SERIAL_NUMBER").
@@ -74,7 +77,9 @@ func Track(spreadsheetID string, studentID int, dateStr string, present bool) er
 		return fmt.Errorf("на листе нет строки с датами (строка 3)")
 	}
 
-	
+	// строка 3 (индекс 2) — это даты в виде excel serial number,
+	// ищем колонку с нужной датой; сравниваем с допуском 0.5, т.к. в таблице
+	// это float и могут быть погрешности округления
 	dateRow := resp.Values[2]
 	targetSerial := excelSerial(date)
 	colIdx := -1
@@ -95,7 +100,8 @@ func Track(spreadsheetID string, studentID int, dateStr string, present bool) er
 		return fmt.Errorf("дата %s не найдена в таблице", dateStr)
 	}
 
-	
+	// ветка "отсутствовал": никого конкретно не отмечаем, а массово
+	// проставляем -1 всем, кто ещё пустой в этой колонке на эту дату
 	if !present {
 		spreadsheet, err := bot.Spreadsheets.Get(spreadsheetID).Do()
 		if err != nil {
@@ -173,7 +179,7 @@ func Track(spreadsheetID string, studentID int, dateStr string, present bool) er
 		return nil
 	}
 
-	
+	// ветка "присутствовал": ищем строку конкретного studentID (колонка A, с 4-й строки)
 	rowIdx := -1
 
 	for i := 3; i < len(resp.Values); i++ {
@@ -198,7 +204,7 @@ func Track(spreadsheetID string, studentID int, dateStr string, present bool) er
 		return fmt.Errorf("ID %d не найден в таблице", studentID)
 	}
 
-	
+	// нашли строку — считаем адрес ячейки (буква колонки + номер строки) и пишем 1
 	value := 1
 
 	cellAddr := fmt.Sprintf(
@@ -208,7 +214,6 @@ func Track(spreadsheetID string, studentID int, dateStr string, present bool) er
 		rowIdx+1,
 	)
 
-	
 	_, err = bot.Spreadsheets.Values.Update(
 		spreadsheetID,
 		cellAddr,
@@ -223,7 +228,8 @@ func Track(spreadsheetID string, studentID int, dateStr string, present bool) er
 		return fmt.Errorf("ошибка записи в ячейку %s: %w", cellAddr, err)
 	}
 
-	
+	// sheetID нужен отдельно от spreadsheetID — это internal id листа "Attendance"
+	// внутри таблицы, Values.Update его не принимает, а BatchUpdate требует
 	spreadsheet, err := bot.Spreadsheets.Get(spreadsheetID).Do()
 	if err != nil {
 		return fmt.Errorf("ошибка получения таблицы: %w", err)
@@ -238,7 +244,7 @@ func Track(spreadsheetID string, studentID int, dateStr string, present bool) er
 		}
 	}
 
-	
+	// красим ячейку зелёным — чисто визуальная отметка "присутствовал"
 	_, err = bot.Spreadsheets.BatchUpdate(
 		spreadsheetID,
 		&sheets.BatchUpdateSpreadsheetRequest{
@@ -272,15 +278,16 @@ func Track(spreadsheetID string, studentID int, dateStr string, present bool) er
 		return fmt.Errorf("ошибка установки цвета ячейки %s: %w", cellAddr, err)
 	}
 
-	fmt.Printf(
-		"записано: ID=%d, дата=%s, ячейка=%s, значение=1\n",
+	// пишем через log, а не fmt.Printf, чтобы это тоже уходило в Server.log,
+	// а не только в консоль
+	log.Printf(
+		"записано: ID=%d, дата=%s, ячейка=%s, значение=1",
 		studentID,
 		dateStr,
 		cellAddr,
 	)
 
 	return nil
-
 }
 
 func excelSerial(t time.Time) float64 {

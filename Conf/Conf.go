@@ -7,8 +7,8 @@ import (
 	"strings"
 )
 
-
-
+// LoadEnvMap читает файл вида КУРС=SpreadsheetID построчно (# — комментарий,
+// пустые строки пропускаются) и возвращает map курс -> spreadsheetID
 func LoadEnvMap(path string) (map[string]string, error) {
 	f, err := os.Open(path)
 	if err != nil {
